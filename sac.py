@@ -1,5 +1,5 @@
 import torch
-from q_network import QNetwork
+from models import QNetwork
 
 class SAC:
     def __init__(self, observations, actions, args):
@@ -12,4 +12,4 @@ class SAC:
         self.gamma = args.gamma
         self.alpha = args.alpha
 
-        self.critic = 
+        self.critic = QNetwork()
