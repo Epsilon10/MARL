@@ -77,7 +77,7 @@ class ActorCritic(nn.Module):
 
         self.policy = GuassianPolicy(num_observations, num_actions, hidden_dim, act_limit)
         self.q1 = QNetwork(num_observations, num_actions, hidden_dim)
-        self.q1 = QNetwork(num_observations, num_actions, hidden_dim)
+        self.q2 = QNetwork(num_observations, num_actions, hidden_dim)
     
     def act(self, observation):
         with torch.nograd():
