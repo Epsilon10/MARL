@@ -1,5 +1,6 @@
 import torch
 from torch.optim import Adam
+import torch.nn.functional as F
 
 from replay_buffer import ReplayBuffer
 from models import ActorCritic
@@ -12,6 +13,8 @@ class SAC:
         self.gamma = args.gamma
         self.tau = args.tau
         self.alpha = args.alpha
+
+        self.target_update_interval = args.target_update_interval
 
         self.act_limit = args.act_limit
 
@@ -34,28 +37,61 @@ class SAC:
         self.automatic_entropy_tuning = args.automatic_entropy_tuning
 
         if self.automatic_entropy_tuning:
-            self.target_entropy = torch.
+            # Target Entropy = −dim(A)
+            self.target_entropy = -torch.prod(torch.Tensor(action_space.shape)).item()
+            self.log_alpha = torch.zeros(1, requires_grad=True)
+            self.alpha_optim = Adam([self.log_alpha], lr=args.lr)
 
-    def compute_loss_q(self, state, action, reward, next_state, done):
-        q1 = self.ac.q1(state, action)
-        q2 = self.ac.q2(state, action)
+    def update_parameters(self, memory, batch_size, updates):
+        state_batch, action_batch, reward_batch, next_state_batch, done_batch = memory.sample(batch_size)
+        
+        state_batch = torch.FloatTensor(state_batch)
+        next_state_batch = torch.FloatTensor(next_state_batch)
+        action_batch = torch.FloatTensor(action_batch)
+        reward_batch = torch.FloatTensor(reward_batch)
+        done_batch = torch.FloatTensor(done_batch)
 
-        # Bellman equation
         with torch.no_grad():
-            a2, logp_a2 = self.ac.pi(next_state)
+            next_action, next_state_log_pi = self.ac.policy.sample(next_state_batch)
+            q1_target = self.ac_target.q1(next_state_batch, next_action)
+            q2_target = self.ac_target.q2(next_state_batch, next_action)
 
-            # Target q values
-            q1_policy_target = self.ac_target.q1(next_state, a2)
-            q2_policy_target = self.ac_target.q2(next_state, a2)
-            
-            q_policy_target = torch.min(q1_policy_target, q2_policy_target)
+            q_targ = torch.min(q1_target, q2_target)
+            next_q_val = reward_batch + self.gamma * (1 - done_batch) * (q_targ - self.alpha * next_state_log_pi)
 
-            # https://spinningup.openai.com/en/latest/algorithms/sac.html
-            y = reward + self.gamma* (1-done) * (q_policy_target - self.alpha * logp_a2)
+        q1 = self.ac.q1(state_batch, action_batch)
+        q2 = self.ac.q2(state_batch, action_batch)
 
-        # MSE error loss
-        loss_q1 = ((q1 - y)**2).mean()
-        loss_q2 = ((q2 - y)**2).mean()
-        loss_q = loss_q1 + loss_q2
+        q1_loss = F.mse_loss(q1, next_q_val)
+        q2_loss = F.mse_loss(q2, next_q_val)
+        q_loss = q1_loss + q2_loss
 
-        return loss_q
+        self.q_optimizer.zero_grad()
+        q_loss.backward()
+        self.q_optimizer.step()
+
+        pi, logp_pi = self.ac.policy.sample(state_batch)
+
+        q1_pi = self.ac.q1(state_batch, pi)
+        q2_pi = self.ac.q2(state_batch, pi)
+        q_pi = torch.min(q1_pi, q2_pi)
+
+        policy_loss = ((self.alpha * logp_pi) - q_pi).mean()
+
+        self.policy_optimizer.zero_grad()
+        policy_loss.backward()
+        self.policy_optimizer.step()
+
+        if self.automatic_entropy_tuning:
+            alpha_loss = -(self.log_alpha * (logp_pi + self.target_entropy).detach()).mean()
+
+            self.alpha_optim.zero_grad()
+            alpha_loss.backward()
+            self.alpha_optim.step()
+
+            self.alpha = self.log_alpha.exp()
+
+        # update networks with polyak averaging
+        with torch.no_grad():
+            for param, target_param in zip(self.ac.parameters(), self.ac_target.parameters()):
+                target_param.copy_(target_param.data * (1 - self.tau) + param.data * self.tau)
