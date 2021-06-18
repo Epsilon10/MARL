@@ -68,7 +68,6 @@ class GuassianPolicy(torch.nn.Module):
         log_prob = normal.log_prob(action).sum(axis=1)
         log_prob -= (2*(np.log(2) - action - F.softplus(-2*action))).sum(axis=1)
 
-
         return action * self.act_limit, log_prob
 
 class ActorCritic(nn.Module):

@@ -9,7 +9,7 @@ from copy import deepcopy
 import itertools
 
 class SAC:
-    def __init__(self, num_observations, action_space, args):
+    def __init__(self, num_observations, action_space_shape, args):
         self.gamma = args.gamma
         self.tau = args.tau
         self.alpha = args.alpha
@@ -18,9 +18,7 @@ class SAC:
 
         self.act_limit = args.act_limit
 
-        actions = action_space[0]
-
-        self.ac = ActorCritic(num_observations, actions, self.act_limit)
+        self.ac = ActorCritic(num_observations, action_space_shape[0], self.act_limit)
         self.ac_target = deepcopy(self.ac)
 
         # Freeze target networks with respect to optimizers (only update via polyak averaging)
@@ -29,7 +27,7 @@ class SAC:
         
         self.q_parameters = itertools.chain(self.ac.q1.parameters(), self.ac.q2.parameters())
 
-        replay_buffer = ReplayBuffer(num_observations, actions, args.replay_size)
+        replay_buffer = ReplayBuffer(num_observations, action_space_shape[0], args.replay_size)
 
         self.policy_optimizer = Adam(self.ac.policy.parameters(), lr=args.lr)
         self.q_optimizer = Adam(self.q_parameters, lr=args.lr)
@@ -38,12 +36,12 @@ class SAC:
 
         if self.automatic_entropy_tuning:
             # Target Entropy = −dim(A)
-            self.target_entropy = -torch.prod(torch.Tensor(action_space.shape)).item()
+            self.target_entropy = -torch.prod(torch.Tensor(action_space_shape)).item()
             self.log_alpha = torch.zeros(1, requires_grad=True)
             self.alpha_optim = Adam([self.log_alpha], lr=args.lr)
 
-    def update_parameters(self, memory, batch_size, updates):
-        state_batch, action_batch, reward_batch, next_state_batch, done_batch = memory.sample(batch_size)
+    def update_parameters(self, replay_buffer, batch_size, updates):
+        state_batch, action_batch, reward_batch, next_state_batch, done_batch = replay_buffer.sample(batch_size)
         
         state_batch = torch.FloatTensor(state_batch)
         next_state_batch = torch.FloatTensor(next_state_batch)
@@ -92,6 +90,10 @@ class SAC:
             self.alpha = self.log_alpha.exp()
 
         # update networks with polyak averaging
-        with torch.no_grad():
-            for param, target_param in zip(self.ac.parameters(), self.ac_target.parameters()):
-                target_param.copy_(target_param.data * (1 - self.tau) + param.data * self.tau)
+        if updates % self.target_update_interval == 0:
+            with torch.no_grad():
+                for param, target_param in zip(self.ac.parameters(), self.ac_target.parameters()):
+                    target_param.copy_(target_param.data * (1 - self.tau) + param.data * self.tau)
+    
+    def get_action(self, observation):
+        return self.ac.act(torch.as_tensor(observation, dtype=torch.float32))
