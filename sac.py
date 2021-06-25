@@ -16,9 +16,7 @@ class SAC:
 
         self.target_update_interval = args.target_update_interval
 
-        self.act_limit = args.act_limit
-
-        self.ac = ActorCritic(num_observations, action_space_shape[0], self.act_limit)
+        self.ac = ActorCritic(num_observations, action_space_shape[0], args.hidden_size)
         self.ac_target = deepcopy(self.ac)
 
         # Freeze target networks with respect to optimizers (only update via polyak averaging)
@@ -26,8 +24,6 @@ class SAC:
             param.requires_grad = False
         
         self.q_parameters = itertools.chain(self.ac.q1.parameters(), self.ac.q2.parameters())
-
-        replay_buffer = ReplayBuffer(num_observations, action_space_shape[0], args.replay_size)
 
         self.policy_optimizer = Adam(self.ac.policy.parameters(), lr=args.lr)
         self.q_optimizer = Adam(self.q_parameters, lr=args.lr)
@@ -46,8 +42,8 @@ class SAC:
         state_batch = torch.FloatTensor(state_batch)
         next_state_batch = torch.FloatTensor(next_state_batch)
         action_batch = torch.FloatTensor(action_batch)
-        reward_batch = torch.FloatTensor(reward_batch)
-        done_batch = torch.FloatTensor(done_batch)
+        reward_batch = torch.FloatTensor(reward_batch).unsqueeze(1)
+        done_batch = torch.FloatTensor(done_batch).unsqueeze(1)
 
         with torch.no_grad():
             next_action, next_state_log_pi = self.ac.policy.sample(next_state_batch)
@@ -94,6 +90,8 @@ class SAC:
             with torch.no_grad():
                 for param, target_param in zip(self.ac.parameters(), self.ac_target.parameters()):
                     target_param.copy_(target_param.data * (1 - self.tau) + param.data * self.tau)
+        
+        return q1_loss.item(), q2_loss.item(), policy_loss.item(), alpha_loss.item(), self.alpha.clone().item()
     
     def get_action(self, observation):
         return self.ac.act(torch.as_tensor(observation, dtype=torch.float32))

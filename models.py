@@ -1,51 +1,158 @@
 import torch
+from torch.functional import norm
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Normal
+from torch.distributions import Normal, Categorical
 import numpy as np
+from math import floor
+from typing import Tuple
 
-LOG_STD_MAX = 2
-LOG_STD_MIN = -20
+LOG_SIG_MAX = 2
+LOG_SIG_MIN = -20
 
-class QNetwork(nn.Module):
-    def __init__(self, num_observations, num_actions, hidden_dim):
-        super(QNetwork, self).__init__()
+class Flatten(nn.Module):
+    def forward(self, x):
+        return x.view(x.size(0), -1)
 
-        # Q1 network
-        self.q1_linear1 = nn.Linear(num_observations+num_actions, hidden_dim)
-        self.q1_linear2 = nn.Linear(hidden_dim, hidden_dim)
-        self.q1_linear3 = nn.Linear(hidden_dim, 1)
+def initialize_weights_he(m):
+    if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
+        torch.nn.init.kaiming_uniform_(m.weight)
+        if m.bias is not None:
+            torch.nn.init.constant_(m.bias, 0)
 
-        #Q2 network
-        self.q2_linear1 = nn.Linear(num_observations+num_actions, hidden_dim)
-        self.q2_linear2 = nn.Linear(hidden_dim, hidden_dim)
-        self.q2_linear3 = nn.Linear(hidden_dim, 1)
+class BaseNetwork(nn.Module):
+    def save(self, path):
+        torch.save(self.state_dict(), path)
 
-    def forward(self, state, action):
-        input = torch.cat([state, action], 1)
+    def load(self, path):
+        self.load_state_dict(torch.load(path))
 
-        x1 = F.relu(self.q1_linear1(input))
-        x1 = F.relu(self.q1_linear2O(x1))
-        x1 = self.q1_linear3(x1)
+class FullCNN(BaseNetwork):
+    def __init__(self, in_channels):
+        super().__init__()
 
-        x2 = F.relu(self.q2_linear1(input))
-        x2 = F.relu(self.q2_linear2(x2))
-        x2 = self.q2_linear3(x2)
+        self.net = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=8, stride=4, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0),
+            nn.ReLU(),
+            Flatten(),
+        ).apply(initialize_weights_he)
+    
+    def forward(self, states):
+        return self.net(states)
+    
+    @staticmethod
+    def conv_output_shape(
+        h_w: Tuple[int, int],
+        kernel_size: int = 1,
+        stride: int = 1,
+        pad: int = 0,
+        dilation: int = 1,
+    ):
+        """
+        Computes the height and width of the output of a convolution layer.
+        """
+        h = floor(
+        ((h_w[0] + (2 * pad) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
+        )
+        w = floor(
+        ((h_w[1] + (2 * pad) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
+        )
+        return h, w
 
-        return x1, x2
+class VisualQNetwork(BaseNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
+        super().__init__()
+
+        self.use_conv = use_conv
+
+        height = input_shape[0]
+        width = input_shape[1]
+        in_channels = input_shape[2]
+
+        conv1_hw = FullCNN.conv_output_shape((height, width), 8, 4)
+        conv2_hw = FullCNN.conv_output_shape(conv1_hw, 4, 2)
+        conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
+
+        if self.use_conv:
+            self.conv = FullCNN(in_channels)       
+
+        self.net = nn.Sequential(
+            nn.Linear(conv3_hw[0],conv3_hw[1], hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, num_actions)
+        ) 
+    
+    def forward(self, states):
+        if self.use_conv:
+            states = self.conv(states)
+        
+        return self.net(states)
+
+class VisualQNetworkPair(BaseNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
+        super().__init__()
+
+        self.q1 = VisualQNetwork(input_shape, num_actions, hidden_dim, use_conv)
+        self.q2 = VisualQNetwork(input_shape, num_actions, hidden_dim, use_conv)
+
+    def forward(self, states):
+        q1 = self.q1(states)
+        q2 = self.q2(states)
+
+class CategoricalPolicy(BaseNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
+        super().__init__()
+
+        in_channels = input_shape[2]
+        height = input_shape[0]
+        width = input_shape[1]
+
+        self.use_conv = use_conv
+
+        if self.use_conv:
+            self.conv = FullCNN(in_channels)
+
+        conv1_hw = FullCNN.conv_output_shape((height, width), 8, 4)
+        conv2_hw = FullCNN.conv_output_shape(conv1_hw, 4, 2)
+        conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
+        
+        self.net = nn.Sequential(
+            nn.Linear(conv3_hw[0]*conv3_hw[1]*in_channels, hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(hidden_dim, num_actions)
+        )
+    
+    def sample(self, states):
+        if self.use_conv:
+            states = self.conv(states)
+        
+        action_probs = F.softmax(self.net(states),dim=1)
+        action_distro = Categorical(action_probs)
+        actions = action_distro.sample().view(-1,1)
+
+        z = (action_probs == 0.0).float() * 1e-8
+        log_action_probs = torch.log(action_probs + z)
+
+        return actions, action_probs, log_action_probs
 
 
 class GuassianPolicy(torch.nn.Module):
-    def __init__(self, num_observations, num_actions, hidden_dim, act_limit):
+    def __init__(self, num_observations, num_actions, hidden_size, act_limit):
         super().__init__()
 
         # 3 layer network, with 2 outputs
 
-        self.layer1 = nn.Linear(num_observations, hidden_dim)
-        self.layer2 = nn.Linear(hidden_dim, hidden_dim)
+        self.linear1 = nn.Linear(num_observations, hidden_size)
+        self.linear2 = nn.Linear(hidden_size, hidden_size)
 
-        self.mean_layer = nn.Linear(hidden_dim, num_actions)
-        self.log_stddev_layer = nn.Linear(hidden_dim, num_actions)
+        self.mean_layer = nn.Linear(hidden_size, num_actions)
+        self.log_stddev_layer = nn.Linear(hidden_size, num_actions)
 
         self.act_limit = act_limit
 
@@ -56,29 +163,46 @@ class GuassianPolicy(torch.nn.Module):
         x = F.relu(self.linear2(x))
         mean = self.mean_layer(x)
         log_stddev = self.log_stddev_layer(x)
-
+        log_stddev = torch.clamp(log_stddev, min=LOG_SIG_MIN, max=LOG_SIG_MAX)
         return mean, log_stddev
 
     def sample(self, state):
         mean, log_stddev = self.forward(state)
         stddev = log_stddev.exp()
         normal = Normal(mean, stddev)
-        action = torch.tanh(normal.rsample())
 
-        log_prob = normal.log_prob(action).sum(axis=1)
-        log_prob -= (2*(np.log(2) - action - F.softplus(-2*action))).sum(axis=1)
+        print(mean, stddev)
 
-        return action * self.act_limit, log_prob
+        sample = normal.rsample()
+        print(sample)
+        log_prob = normal.log_prob(sample).sum(axis=-1)
+        print("LOG PROB", log_prob)
+        #log_prob -= (2*(np.log(2) - sample - F.softplus(-2*sample))).sum(axis=0)
+        
+        action = torch.tanh(sample) * self.act_limit
+        return action, log_prob
+
+class CategoricalPolicy(BaseNetwork):
+    def __init__(self, num_channels, num_actions, use_conv=False):
+        super().__init__()
+        if use_conv:
+            self.conv = FullCNN(num_channels)
+        
+
+
+        self.net = nn.Sequential(
+            nn.Linear()
+        )
 
 class ActorCritic(nn.Module):
-    def __init__(self, num_observations, num_actions, act_limit, hidden_dim=(256,256)):
+    def __init__(self, num_observations, num_actions, hidden_dim, act_limit=1):
         super().__init__()
 
         self.policy = GuassianPolicy(num_observations, num_actions, hidden_dim, act_limit)
         self.q1 = QNetwork(num_observations, num_actions, hidden_dim)
         self.q2 = QNetwork(num_observations, num_actions, hidden_dim)
     
-    def act(self, observation):
+    def act(self, state):
         with torch.nograd():
-            action, _ = self.policy(observation)
+            action, _ = self.policy.sample(state)
             return action.numpy()
