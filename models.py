@@ -42,7 +42,7 @@ class FullCNN(BaseNetwork):
         ).apply(initialize_weights_he)
     
     def forward(self, states):
-        return self.net(states)
+        return self.net(states.permute(0,3,1,2))
     
     @staticmethod
     def conv_output_shape(
@@ -81,7 +81,7 @@ class VisualQNetwork(BaseNetwork):
             self.conv = FullCNN(in_channels)       
 
         self.net = nn.Sequential(
-            nn.Linear(conv3_hw[0],conv3_hw[1], hidden_dim),
+            nn.Linear(conv3_hw[0]*conv3_hw[1]*64, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -105,6 +105,8 @@ class VisualQNetworkPair(BaseNetwork):
         q1 = self.q1(states)
         q2 = self.q2(states)
 
+        return q1, q2
+
 class CategoricalPolicy(BaseNetwork):
     def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
         super().__init__()
@@ -112,6 +114,8 @@ class CategoricalPolicy(BaseNetwork):
         in_channels = input_shape[2]
         height = input_shape[0]
         width = input_shape[1]
+
+        print("IN CHANNEL", in_channels)
 
         self.use_conv = use_conv
 
@@ -123,7 +127,7 @@ class CategoricalPolicy(BaseNetwork):
         conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
         
         self.net = nn.Sequential(
-            nn.Linear(conv3_hw[0]*conv3_hw[1]*in_channels, hidden_dim),
+            nn.Linear(conv3_hw[0]*conv3_hw[1]*64, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, num_actions)
         )
@@ -182,18 +186,7 @@ class GuassianPolicy(torch.nn.Module):
         action = torch.tanh(sample) * self.act_limit
         return action, log_prob
 
-class CategoricalPolicy(BaseNetwork):
-    def __init__(self, num_channels, num_actions, use_conv=False):
-        super().__init__()
-        if use_conv:
-            self.conv = FullCNN(num_channels)
-        
-
-
-        self.net = nn.Sequential(
-            nn.Linear()
-        )
-
+"""
 class ActorCritic(nn.Module):
     def __init__(self, num_observations, num_actions, hidden_dim, act_limit=1):
         super().__init__()
@@ -206,3 +199,4 @@ class ActorCritic(nn.Module):
         with torch.nograd():
             action, _ = self.policy.sample(state)
             return action.numpy()
+"""
