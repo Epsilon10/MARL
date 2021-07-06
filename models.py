@@ -144,6 +144,15 @@ class CategoricalPolicy(BaseNetwork):
         log_action_probs = torch.log(action_probs + z)
 
         return actions, action_probs, log_action_probs
+    
+    def act(self, states):
+        if self.use_conv:
+            states = self.conv(states)
+        action_logits = self.net(states)
+        greedy_actions = torch.argmax(
+            action_logits, dim=1, keepdim=True)
+        return greedy_actions
+
 
 
 class GuassianPolicy(torch.nn.Module):
@@ -178,9 +187,7 @@ class GuassianPolicy(torch.nn.Module):
         print(mean, stddev)
 
         sample = normal.rsample()
-        print(sample)
         log_prob = normal.log_prob(sample).sum(axis=-1)
-        print("LOG PROB", log_prob)
         #log_prob -= (2*(np.log(2) - sample - F.softplus(-2*sample))).sum(axis=0)
         
         action = torch.tanh(sample) * self.act_limit

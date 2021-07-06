@@ -1,4 +1,4 @@
-from math import log
+from math import log, log10
 import torch
 import numpy as np
 from torch.serialization import save
@@ -9,7 +9,8 @@ from torch.utils.tensorboard import SummaryWriter
 import datetime
 
 import torch.nn as nn
-# based on https://github.com/ku2482/sac-discrete.pytorch/blob/40c9d246621e658750e0a03001325006da57f2d4/sacd/agent/sacd.py
+
+# based on https://arxiv.org/pdf/1910.07207.pdf
 
 def update_params(optim, loss, retain_graph=False):
     optim.zero_grad()
@@ -17,7 +18,7 @@ def update_params(optim, loss, retain_graph=False):
     optim.step()
 
 class SAC_Discrete():
-    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=1e-5, automatic_entropy_tuning=True):
+    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True):
         self.critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True)
         self.target_critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).eval()
 
@@ -32,13 +33,14 @@ class SAC_Discrete():
         self.q1_optim = Adam(self.critic.q1.parameters(), lr=lr)
         self.q2_optim = Adam(self.critic.q2.parameters(), lr=lr)
 
-        self.target_entropy = -np.log(1.0 / num_actions) * 0.98
+        self.target_entropy = -np.log(1.0 / num_actions) * .98
 
         # optimize log alpha instead of alpha
+
         self.log_alpha = torch.zeros(1, requires_grad=True)
         self.alpha = self.log_alpha.exp()
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
-
+        
         self.gamma = gamma
 
         self.writer = SummaryWriter('runs/{}_SAC_{}_{}_{}'.format(datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), "GridWorld",
@@ -48,13 +50,11 @@ class SAC_Discrete():
         self.target_critic.load_state_dict(self.critic.state_dict())
     
     def explore(self, states):
-        
         with torch.no_grad():
             actions, _, _ = self.policy.sample(states)
         return actions
     
     def act(self, states):
-        print("SAMPLE STATE", states)
         with torch.no_grad():
             actions = self.policy.act(states)
         return actions
@@ -73,15 +73,7 @@ class SAC_Discrete():
                 torch.min(next_q1, next_q2) - self.alpha * log_action_probs
                 )).sum(dim=1, keepdim=True)
 
-        assert rewards.shape == next_q.shape
-        print("NEXT Q", next_q)
-        print("GAMMA", self.gamma)
-        print("REWARDS", rewards)
-        print("DONES", dones.byte())
-        
-
-        print("TTTT",rewards + (1.0 - dones.byte()) * self.gamma * next_q)
-        
+        assert rewards.shape == next_q.shape        
         return rewards + (1.0 - dones.byte()) * self.gamma * next_q
 
     def calc_critic_loss(self, batch):
@@ -91,8 +83,6 @@ class SAC_Discrete():
         mean_q1 = curr_q1.detach().mean().item()
         mean_q2 = curr_q2.detach().mean().item()
 
-        print("CURR Q", curr_q1, curr_q2)
-        print("TARGEt Q", target_q)
         criterion = torch.nn.MSELoss()
         q1_loss = criterion(curr_q1, target_q)
         q2_loss = criterion(curr_q2, target_q)
@@ -108,24 +98,19 @@ class SAC_Discrete():
         with torch.no_grad():
             # Q for every actions to calculate expectations of Q.
             q1, q2 = self.critic(states)
-            q = torch.min(q1, q2)
-
-        # Expectations of entropies.
-        entropies = -torch.sum(
-            action_probs * log_action_probs, dim=1, keepdim=True)
-
-        # Expectations of Q.
-        q = torch.sum(torch.min(q1, q2) * action_probs, dim=1, keepdim=True)
+                
+        min_q = torch.min(q1, q2)
+        inside_term = self.alpha * log_action_probs - min_q
+        policy_loss = (action_probs * inside_term).sum(dim=1).mean()
+        
 
         # Policy objective is maximization of (Q + alpha * entropy) with
-        policy_loss = -(- q - self.alpha * entropies).mean()
 
-        return policy_loss, entropies.detach()
+        return policy_loss, log_action_probs
 
-    def calc_entropy_loss(self, entropies):
-        entropy_loss = -torch.mean(
-            self.log_alpha * (self.target_entropy - entropies))
-        return entropy_loss           
+    def calc_entropy_loss(self, log_action_probs):
+        alpha_loss = -(self.log_alpha * (log_action_probs + self.target_entropy).detach()).mean()
+        return alpha_loss   
     
     def update_target(self):
         self.target_critic.load_state_dict(self.critic.state_dict())
@@ -133,11 +118,8 @@ class SAC_Discrete():
     def learn(self, batch, to_log=False):
         self.learning_steps +=1
         q1_loss, q2_loss, mean_q1, mean_q2 = self.calc_critic_loss(batch)
-        policy_loss, entropies = self.calc_policy_loss(batch)
-        entropy_loss = self.calc_entropy_loss(entropies)
-        
-        print("POL LOSS", policy_loss)
-        print("Q LOSS", q1_loss, q2_loss)
+        policy_loss, log_action_probs = self.calc_policy_loss(batch)
+        entropy_loss = self.calc_entropy_loss(log_action_probs)
         
         update_params(self.q1_optim, q1_loss)
         update_params(self.q2_optim, q2_loss)
@@ -164,6 +146,6 @@ class SAC_Discrete():
             self.writer.add_scalar(
                 'stats/mean_Q2', mean_q2, self.learning_steps)
             self.writer.add_scalar(
-                'stats/entropy', entropies.detach().mean().item(),
+                'stats/entropy', self.alpha,
                 self.learning_steps)
         

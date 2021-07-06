@@ -14,7 +14,6 @@ class ReplayBuffer:
             self.buffer.append(None)
         self.buffer[self.position] = (state, action, reward, next_state, done)
         self.position = (self.position + 1) % self.capacity
-        print("REPLAY SIZE: ", len(self))
     
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)

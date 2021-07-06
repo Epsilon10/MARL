@@ -21,12 +21,13 @@ from torch import tensor
 
 class UnityMLTrainer():
     # Discrete action spaces only right now, will impl continuous in futre
-    def __init__(self, env, num_steps=10000, batch_size=64,
-                 replay_size=100000, gamma=0.99,
-                 target_entropy_ratio=0.98, start_steps=1000,
-                 update_interval=4, target_update_interval=800,
-                 num_eval_steps=12500, max_episode_steps=2700,
-                 log_interval=10, eval_interval=100, cuda=True, seed=0, num_agents=9, automatic_entropy_tuning=True):
+    def __init__(self, env,num_steps=100000, batch_size=64,
+                 lr=0.0003, replay_size=1000000, gamma=0.99, multi_step=1,
+                 target_entropy_ratio=0.98, start_steps=10000,
+                 update_interval=4, target_update_interval=8000,
+                 use_per=False, dueling_net=False, num_eval_steps=125000,
+                 max_episode_steps=27000, log_interval=10, eval_interval=1000,
+                 cuda=True, seed=0, num_agents=9, automatic_entropy_tuning=True):
         
         self.env = env
         self.env.reset()
@@ -39,14 +40,14 @@ class UnityMLTrainer():
         self.num_eval_steps = num_eval_steps
         self.num_steps = num_steps
         self.episodes = 0
-
+        self.num_agents = num_agents
         self.behavior_name = list(self.env.behavior_specs)[0]
         behavior_spec = self.env.behavior_specs[self.behavior_name]
         
         self.action_spec = behavior_spec.action_spec
         self.observation_specs = behavior_spec.observation_specs
     
-        self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], 512)
+        self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], hidden_dim=512,  gamma=0.99, lr=lr)
         self.replay_buffer = ReplayBuffer(replay_size, seed)
         self.batch_size = batch_size
 
@@ -71,9 +72,7 @@ class UnityMLTrainer():
         while not all_done and episode_steps <= self.max_episode_steps:
             print("STEPS:", self.steps)
             decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
-
             all_done = len(decision_steps) == 0
-            print("NUM NOT DONE", len(decision_steps))
 
             for agent_id in terminal_steps:            
                 self.replay_buffer.push(
@@ -92,8 +91,7 @@ class UnityMLTrainer():
             if self.start_steps > self.steps:
                 actions = self.action_spec.random_action(num_active_agents).discrete
             else:
-                actions = self.agent.explore(torch.from_numpy(decision_steps.obs[0]))
-                actions = actions.numpy()
+                actions = self.agent.explore(torch.from_numpy(decision_steps.obs[0])).numpy()
 
             for action, agent_id in zip(actions, decision_steps):
                 if agent_id in self.last_observations:
@@ -125,7 +123,7 @@ class UnityMLTrainer():
                 print("UPDATE TARGET")
                 self.agent.update_target()
             
-            if self.steps % self.eval_interval == 0 and False:
+            if self.steps % self.eval_interval == 0:
                 print("EVAL")
                 self.evaluate()
                 self.agent.save_models(save_dir="models/")
@@ -133,25 +131,39 @@ class UnityMLTrainer():
     def evaluate(self):
         num_episodes = 0
         num_steps = 0
-        total_return = 0
-        for i in range(self.num_eval_steps):
+        total_return = 0.0
+        
+        while True:
             self.env.reset()
+            episode_steps = 0
             episode_return = 0.0
             all_done = False
-
-            for n in range(self.max_episode_steps):
+            while not all_done and episode_steps <= self.max_episode_steps:
                 decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
+                all_done = len(terminal_steps) == self.num_agents
                 actions = self.agent.act(torch.from_numpy(decision_steps.obs[0])).numpy()
                 self.set_actions_for_agents(actions)
-                print("ACTIONS", actions)
                 self.env.step()
                 num_steps += 1
                 episode_return += decision_steps.reward.mean()
-                print(f"EP: {i}, STEPS: {n}, NUM FINISHED: {9 - len(decision_steps)}")
-                print("EP return", episode_return)
             
             num_episodes += 1
             total_return += episode_return
+            print(f"EP: {num_episodes}, RETURN: {total_return}")
+
+            if num_steps > self.num_eval_steps:
+                break
+         
+        mean_return = total_return / num_episodes
+        self.writer.add_scalar(
+            'reward/test', mean_return, self.steps)
+        print('-' * 60)
+        print(f'Num steps: {self.steps:<5}  '
+              f'return: {mean_return:<5.1f}')
+        print('-' * 60)
+    
+    def close(self):
+        self.env.close()
 
             
     def run(self):
