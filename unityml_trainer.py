@@ -123,7 +123,7 @@ class UnityMLTrainer():
                 print("UPDATE TARGET")
                 self.agent.update_target()
             
-            if self.steps % self.eval_interval == 0:
+            if self.steps % self.eval_interval == 0 and self.steps >= self.start_steps:
                 print("EVAL")
                 self.evaluate()
                 self.agent.save_models(save_dir="models/")
@@ -157,7 +157,7 @@ class UnityMLTrainer():
 
          
         mean_return = total_return / num_episodes
-        self.writer.add_scalar(
+        self.agent.writer.add_scalar(
             'reward/test', mean_return, self.steps)
         print('-' * 60)
         print(f'Num steps: {self.steps:<5}  '
