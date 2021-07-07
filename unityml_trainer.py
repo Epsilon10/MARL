@@ -126,7 +126,7 @@ class UnityMLTrainer():
             if self.steps % self.eval_interval == 0 and self.steps >= self.start_steps:
                 print("EVAL")
                 self.evaluate()
-                self.agent.save_models(save_dir="models/")
+                #self.agent.save_models(save_dir="models/")
                 
     def evaluate(self):
         num_episodes = 0
