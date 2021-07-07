@@ -145,6 +145,7 @@ class UnityMLTrainer():
                 self.set_actions_for_agents(actions)
                 self.env.step()
                 num_steps += 1
+                episode_steps += 1
                 episode_return += decision_steps.reward.mean()
             
             num_episodes += 1

@@ -9,6 +9,7 @@ from torch.utils.tensorboard import SummaryWriter
 import datetime
 
 import torch.nn as nn
+import torch.nn.functional as F
 
 # based on https://arxiv.org/pdf/1910.07207.pdf
 
@@ -18,11 +19,13 @@ def update_params(optim, loss, retain_graph=False):
     optim.step()
 
 class SAC_Discrete():
-    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True):
-        self.critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True)
-        self.target_critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).eval()
+    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True, cuda=False):
+        self.device = torch.device("cuda" if cuda and torch.cuda.is_available() else "cpu")
 
-        self.policy = CategoricalPolicy(observation_shape, num_actions, hidden_dim, True)
+        self.critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).to(device=self.device)
+        self.target_critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).to(device=self.device).eval()
+
+        self.policy = CategoricalPolicy(observation_shape, num_actions, hidden_dim, True).to(device=self.device)
         
         self.target_critic.load_state_dict(self.critic.state_dict())
 
@@ -37,7 +40,7 @@ class SAC_Discrete():
 
         # optimize log alpha instead of alpha
 
-        self.log_alpha = torch.zeros(1, requires_grad=True)
+        self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
         self.alpha = self.log_alpha.exp()
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
         
@@ -83,9 +86,8 @@ class SAC_Discrete():
         mean_q1 = curr_q1.detach().mean().item()
         mean_q2 = curr_q2.detach().mean().item()
 
-        criterion = torch.nn.MSELoss()
-        q1_loss = criterion(curr_q1, target_q)
-        q2_loss = criterion(curr_q2, target_q)
+        q1_loss = F.mse_loss(curr_q1, target_q)
+        q2_loss = F.mse_loss(curr_q2, target_q)
 
         return q1_loss, q2_loss, mean_q1, mean_q2
 
