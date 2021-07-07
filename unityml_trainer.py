@@ -21,12 +21,12 @@ from torch import tensor
 
 class UnityMLTrainer():
     # Discrete action spaces only right now, will impl continuous in futre
-    def __init__(self, env,num_steps=100000, batch_size=64,
+    def __init__(self, env,num_steps=10000, batch_size=64,
                  lr=0.0003, replay_size=1000000, gamma=0.99, multi_step=1,
-                 target_entropy_ratio=0.98, start_steps=10000,
-                 update_interval=4, target_update_interval=8000,
-                 use_per=False, dueling_net=False, num_eval_steps=125000,
-                 max_episode_steps=27000, log_interval=10, eval_interval=1000,
+                 target_entropy_ratio=0.98, start_steps=2000,
+                 update_interval=4, target_update_interval=800,
+                 use_per=False, dueling_net=False, num_eval_steps=12500,
+                 max_episode_steps=2700, log_interval=5, eval_interval=100,
                  cuda=True, seed=0, num_agents=9, automatic_entropy_tuning=True):
         
         self.env = env
@@ -135,9 +135,12 @@ class UnityMLTrainer():
         
         while True:
             self.env.reset()
+            if num_steps > self.num_eval_steps:
+                break
             episode_steps = 0
             episode_return = 0.0
             all_done = False
+            
             while not all_done and episode_steps <= self.max_episode_steps:
                 decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
                 all_done = len(terminal_steps) == self.num_agents
@@ -152,8 +155,6 @@ class UnityMLTrainer():
             total_return += episode_return
             print(f"EP: {num_episodes}, RETURN: {total_return}")
 
-            if num_steps > self.num_eval_steps:
-                break
          
         mean_return = total_return / num_episodes
         self.writer.add_scalar(
