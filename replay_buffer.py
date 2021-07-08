@@ -18,6 +18,7 @@ class ReplayBuffer:
     def sample(self, batch_size):
         batch = random.sample(self.buffer, batch_size)
         state_batch, action_batch, reward_batch, next_state_batch, done_batch = map(np.stack, zip(*batch))
+        print("REW BATCH", reward_batch)
         return torch.from_numpy(state_batch), torch.from_numpy(action_batch.reshape((batch_size, 1))), torch.from_numpy(reward_batch.reshape(batch_size, 1)), torch.from_numpy(next_state_batch), torch.from_numpy(done_batch.reshape(batch_size,1))
 
     def __len__(self):

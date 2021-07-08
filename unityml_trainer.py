@@ -22,7 +22,7 @@ from torch import tensor
 class UnityMLTrainer():
     # Discrete action spaces only right now, will impl continuous in futre
     def __init__(self, env,num_steps=10000, batch_size=64,
-                 lr=0.0003, replay_size=1000000, gamma=0.99, multi_step=1,
+                 lr=3e-4, replay_size=1000000, gamma=0.99, multi_step=1,
                  target_entropy_ratio=0.98, start_steps=2000,
                  update_interval=4, target_update_interval=800,
                  use_per=False, dueling_net=False, num_eval_steps=12500,
@@ -48,7 +48,7 @@ class UnityMLTrainer():
         self.observation_specs = behavior_spec.observation_specs
     
         self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], hidden_dim=512,  gamma=0.99, lr=lr)
-        self.replay_buffer = ReplayBuffer(replay_size, seed)
+        self.replay_buffer = ReplayBuffer(replay_size, 123456)
         self.batch_size = batch_size
 
         self.last_observations = {}
@@ -69,6 +69,7 @@ class UnityMLTrainer():
         self.episodes += 1 
         self.env.reset()
         print("EPISODE", self.episodes)
+
         while not all_done and episode_steps <= self.max_episode_steps:
             print("STEPS:", self.steps)
             decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
@@ -82,6 +83,8 @@ class UnityMLTrainer():
                     next_state=terminal_steps[agent_id].obs[0],
                     done=not terminal_steps[agent_id].interrupted
                 )
+
+                print("REW", terminal_steps[agent_id].reward)
 
                 self.last_observations.pop(agent_id)
                 self.last_actions.pop(agent_id)
@@ -119,11 +122,7 @@ class UnityMLTrainer():
                 to_log = self.steps % self.log_interval == 0
                 self.agent.learn(batch, to_log)
             
-            if self.steps % self.target_update_interval == 0:
-                print("UPDATE TARGET")
-                self.agent.update_target()
-            
-            if self.steps % self.eval_interval == 0 and self.steps >= self.start_steps:
+            if self.steps % self.eval_interval == 0 and self.steps > self.start_steps and False:
                 print("EVAL")
                 self.evaluate()
                 #self.agent.save_models(save_dir="models/")
@@ -146,6 +145,7 @@ class UnityMLTrainer():
                 all_done = len(terminal_steps) == self.num_agents
                 actions = self.agent.act(torch.from_numpy(decision_steps.obs[0])).numpy()
                 self.set_actions_for_agents(actions)
+                print("ACTIONS", actions)
                 self.env.step()
                 num_steps += 1
                 episode_steps += 1

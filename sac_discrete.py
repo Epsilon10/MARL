@@ -18,8 +18,14 @@ def update_params(optim, loss, retain_graph=False):
     loss.backward(retain_graph=retain_graph)
     optim.step()
 
+def soft_update_of_target_network(local_model, target_model, tau):
+    """Updates the target network in the direction of the local network but by taking a step size
+    less than one so the target network's parameter values trail the local networks. This helps stabilise training"""
+    for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
+        target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
+
 class SAC_Discrete():
-    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True, cuda=False):
+    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True, cuda=False, tau=0.005):
         self.device = torch.device("cuda" if cuda and torch.cuda.is_available() else "cpu")
 
         self.critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).to(device=self.device)
@@ -45,6 +51,7 @@ class SAC_Discrete():
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
         
         self.gamma = gamma
+        self.tau = tau
 
         self.writer = SummaryWriter('runs/{}_SAC_{}_{}_{}'.format(datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), "GridWorld",
                                                             "Categorical", "autotune" if automatic_entropy_tuning else ""))
@@ -72,16 +79,19 @@ class SAC_Discrete():
         with torch.no_grad():
             _, action_probs, log_action_probs = self.policy.sample(next_states)
             next_q1, next_q2 = self.target_critic(next_states)
-            next_q = (action_probs * (
-                torch.min(next_q1, next_q2) - self.alpha * log_action_probs
-                )).sum(dim=1, keepdim=True)
-
-        assert rewards.shape == next_q.shape        
-        return rewards + (1.0 - dones.byte()) * self.gamma * next_q
+            min_qf_next_target = action_probs * (torch.min(next_q1, next_q2) - self.alpha * log_action_probs)
+            
+            min_qf_next_target = min_qf_next_target.sum(dim=1).unsqueeze(-1)
+            print("MIN QF NEXT TARG", min_qf_next_target)
+            target_q = rewards + (1.0 - dones.byte()) * self.gamma * (min_qf_next_target)
+        print("TARGET Q", target_q)
+        return target_q
 
     def calc_critic_loss(self, batch):
         curr_q1, curr_q2 = self.calc_current_q(*batch)
         target_q = self.calc_target_q(*batch)
+
+        print("CURR Q", curr_q1, curr_q2)
 
         mean_q1 = curr_q1.detach().mean().item()
         mean_q2 = curr_q2.detach().mean().item()
@@ -94,25 +104,21 @@ class SAC_Discrete():
     def calc_policy_loss(self, batch):
         states, actions, rewards, next_states, dones = batch
 
-        # (Log of) probabilities to calculate expectations of Q and entropies.
         _, action_probs, log_action_probs = self.policy.sample(states)
+        print("ACTION PROBS", action_probs)
 
         with torch.no_grad():
-            # Q for every actions to calculate expectations of Q.
             q1, q2 = self.critic(states)
-                
-        min_q = torch.min(q1, q2)
+            min_q = torch.min(q1, q2)
+
         inside_term = self.alpha * log_action_probs - min_q
         policy_loss = (action_probs * inside_term).sum(dim=1).mean()
-        
-
-        # Policy objective is maximization of (Q + alpha * entropy) with
-
+        log_action_probs = torch.sum(log_action_probs * action_probs, dim=1)
         return policy_loss, log_action_probs
 
-    def calc_entropy_loss(self, log_action_probs):
-        alpha_loss = -(self.log_alpha * (log_action_probs + self.target_entropy).detach()).mean()
-        return alpha_loss   
+    def calc_entropy_loss(self, log_probs):
+        entropy_loss = -(self.log_alpha * (log_probs + self.target_entropy).detach()).mean()
+        return entropy_loss
     
     def update_target(self):
         self.target_critic.load_state_dict(self.critic.state_dict())
@@ -122,12 +128,15 @@ class SAC_Discrete():
         q1_loss, q2_loss, mean_q1, mean_q2 = self.calc_critic_loss(batch)
         policy_loss, log_action_probs = self.calc_policy_loss(batch)
         entropy_loss = self.calc_entropy_loss(log_action_probs)
+
+        print("ENTROPY LOSS", entropy_loss)
         
         update_params(self.q1_optim, q1_loss)
         update_params(self.q2_optim, q2_loss)
+        soft_update_of_target_network(self.critic, self.target_critic, self.tau)
         update_params(self.policy_optim, policy_loss)
         update_params(self.alpha_optim, entropy_loss)
-
+        print("LOG ALPHA", self.log_alpha)
         self.alpha = self.log_alpha.exp()         
 
         if to_log:
@@ -141,13 +150,14 @@ class SAC_Discrete():
                 'loss/policy', policy_loss.detach().item(),
                 self.learning_steps)
             self.writer.add_scalar(
-                'loss/entropy', entropy_loss.detach().item(),
+                'loss/alpha', entropy_loss.detach().item(),
+                self.learning_steps)
+            self.writer.add_scalar(
+                'stats/alpha', self.alpha.detach().item(),
                 self.learning_steps)
             self.writer.add_scalar(
                 'stats/mean_Q1', mean_q1, self.learning_steps)
             self.writer.add_scalar(
                 'stats/mean_Q2', mean_q2, self.learning_steps)
-            self.writer.add_scalar(
-                'stats/entropy', self.alpha,
-                self.learning_steps)
+
         

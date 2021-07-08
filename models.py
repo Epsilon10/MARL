@@ -135,8 +135,9 @@ class CategoricalPolicy(BaseNetwork):
     def sample(self, states):
         if self.use_conv:
             states = self.conv(states)
-        
-        action_probs = F.softmax(self.net(states),dim=1)
+        out = self.net(states)
+        print("OUT POLICY STATES", out)
+        action_probs = F.softmax(out,dim=1)
         action_distro = Categorical(action_probs)
         actions = action_distro.sample().view(-1,1)
 
