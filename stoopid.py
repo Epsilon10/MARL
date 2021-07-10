@@ -189,12 +189,14 @@ class Trainer:
         q_net(torch.from_numpy(decision_steps.obs[0])).detach().numpy()
       )
 
-      print("ACTION PROBS", actions_values)
       
       # Pick the best action using argmax
+      actions_values += epsilon * (
+        np.random.randn(actions_values.shape[0], actions_values.shape[1])
+      ).astype(np.float32)
       actions = np.argmax(actions_values, axis=1)
-      print("ACTIONS", actions)
       actions.resize((len(decision_steps), 1))
+      print("ACTIONS", actions)
       # Store the action that was picked, it will be put in the trajectory later
       for agent_index, agent_id in enumerate(decision_steps.agent_id):
         dict_last_action_from_agent[agent_id] = actions[agent_index]

@@ -115,8 +115,6 @@ class CategoricalPolicy(BaseNetwork):
         height = input_shape[0]
         width = input_shape[1]
 
-        print("IN CHANNEL", in_channels)
-
         self.use_conv = use_conv
 
         if self.use_conv:
@@ -132,11 +130,11 @@ class CategoricalPolicy(BaseNetwork):
             nn.Linear(hidden_dim, num_actions)
         )
     
-    def sample(self, states):
+    def sample(self, states, epsilon=0.1):
         if self.use_conv:
             states = self.conv(states)
         out = self.net(states)
-        print("OUT POLICY STATES", out)
+        out+= epsilon * torch.rand(out.shape[0], out.shape[1])
         action_probs = F.softmax(out,dim=1)
         action_distro = Categorical(action_probs)
         actions = action_distro.sample().view(-1,1)
@@ -146,10 +144,11 @@ class CategoricalPolicy(BaseNetwork):
 
         return actions, action_probs, log_action_probs
     
-    def act(self, states):
+    def act(self, states, epsilon=0.1):
         if self.use_conv:
             states = self.conv(states)
         action_logits = self.net(states)
+        action_logits += epsilon * torch.rand(action_logits.shape[0], action_logits.shape[1])
         greedy_actions = torch.argmax(
             action_logits, dim=1, keepdim=True)
         return greedy_actions

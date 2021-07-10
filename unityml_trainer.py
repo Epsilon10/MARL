@@ -5,7 +5,7 @@ import torch
 
 from mlagents_envs.environment import ActionTuple
 
-from sac_discrete import SAC_Discrete
+from sac_discrete import SAC_Discrete, update_params
 from replay_buffer import ReplayBuffer
 
 from typing import Dict
@@ -19,10 +19,28 @@ from torch import tensor
 
 # A Trajectory is an ordered sequence of Experiences
 
+class GridWorldTrainData():
+    def __init__(self, eval):
+        self.eval = eval
+        if not eval:
+            self.last_observations = {}
+            self.last_actions = {}
+        else:
+            self.cum_rew_agent = {}
+            self.cum_rew = []
+    
+    def clear(self):
+        if not self.eval:
+            self.last_observations.clear()
+            self.last_actions.clear()
+        else:
+            self.cum_rew_agent.clear()
+            self.cum_rew.clear()
+    
 class UnityMLTrainer():
     # Discrete action spaces only right now, will impl continuous in futre
-    def __init__(self, env,num_steps=10000, batch_size=64,
-                 lr=3e-4, replay_size=1000000, gamma=0.99, multi_step=1,
+    def __init__(self, env,num_steps=100000, batch_size=64,
+                 lr=3e-4, replay_size=100000, gamma=0.99, multi_step=1,
                  target_entropy_ratio=0.98, start_steps=2000,
                  update_interval=4, target_update_interval=800,
                  use_per=False, dueling_net=False, num_eval_steps=12500,
@@ -51,123 +69,112 @@ class UnityMLTrainer():
         self.replay_buffer = ReplayBuffer(replay_size, 123456)
         self.batch_size = batch_size
 
-        self.last_observations = {}
-        self.dones = {}
-        self.last_actions = {}
-
         self.start_steps = start_steps
         self.steps = 0
+    
     
     def set_actions_for_agents(self, actions):
         action_tuple = ActionTuple()
         action_tuple.add_discrete(actions)
         self.env.set_actions(self.behavior_name, action_tuple)
 
-    def train_episode(self):
-        all_done = False
-        episode_steps = 0
-        self.episodes += 1 
-        self.env.reset()
-        print("EPISODE", self.episodes)
+    def execute(self, train_data, eval):
+        decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
 
-        while not all_done and episode_steps <= self.max_episode_steps:
-            print("STEPS:", self.steps)
-            decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
-            all_done = len(decision_steps) == 0
-
-            for agent_id in terminal_steps:            
+        for agent_id in terminal_steps:   
+            if not eval:         
                 self.replay_buffer.push(
-                    state=self.last_observations[agent_id].copy(),
-                    action=self.last_actions[agent_id],
+                    state=train_data.last_observations[agent_id].copy(),
+                    action=train_data.last_actions[agent_id],
                     reward=terminal_steps[agent_id].reward,
                     next_state=terminal_steps[agent_id].obs[0],
                     done=not terminal_steps[agent_id].interrupted
                 )
 
-                print("REW", terminal_steps[agent_id].reward)
-
-                self.last_observations.pop(agent_id)
-                self.last_actions.pop(agent_id)
-            
-            num_active_agents = len(decision_steps)
-
-            if self.start_steps > self.steps:
-                actions = self.action_spec.random_action(num_active_agents).discrete
+                train_data.last_observations.pop(agent_id)
+                train_data.last_actions.pop(agent_id)
             else:
-                actions = self.agent.explore(torch.from_numpy(decision_steps.obs[0])).numpy()
+                train_data.cum_rew.append(train_data.cum_rew_agent.pop(agent_id) + terminal_steps[agent_id].reward)
+                
+        num_active_agents = len(decision_steps)
 
-            for action, agent_id in zip(actions, decision_steps):
-                if agent_id in self.last_observations:
+        if eval:
+            actions = self.agent.act(torch.from_numpy(decision_steps.obs[0])).numpy()
+        elif self.start_steps > self.steps:
+            actions = self.action_spec.random_action(num_active_agents).discrete
+        else:
+            actions = self.agent.explore(torch.from_numpy(decision_steps.obs[0])).numpy()
+
+        for action, agent_id in zip(actions, decision_steps):
+            if not eval:
+                if agent_id in train_data.last_observations:
                     self.replay_buffer.push(
-                        state=self.last_observations[agent_id].copy(),
-                        action=self.last_actions[agent_id],
+                        state=train_data.last_observations[agent_id].copy(),
+                        action=train_data.last_actions[agent_id],
                         reward=decision_steps[agent_id].reward,
                         next_state=decision_steps[agent_id].obs[0],
                         done=False
                     )
+                train_data.last_observations[agent_id] = decision_steps[agent_id].obs[0]
+                train_data.last_actions[agent_id] = action.item()
+            else:
+                if agent_id not in train_data.cum_rew_agent:
+                    train_data.cum_rew_agent[agent_id] = 0
 
-                self.last_observations[agent_id] = decision_steps[agent_id].obs[0]
-                self.last_actions[agent_id] = action.item()
+                train_data.cum_rew_agent[agent_id] += decision_steps[agent_id].reward
+
             
-            self.set_actions_for_agents(actions)
+        
+        self.set_actions_for_agents(actions)
+        self.env.step()
+            
+            
+    def train_episode(self):
+        episode_steps = 0
+        self.episodes += 1 
+        self.env.reset()
 
-            self.env.step()
+        train_data = GridWorldTrainData(eval=False)
 
+        while episode_steps < self.max_episode_steps:
+            self.execute(train_data=train_data, eval=False)
             self.steps += 1
-            episode_steps += 1
-            
-            if self.steps % self.update_interval == 0 and self.steps >= self.start_steps:
-                print("LEARN")
+
+            if self.steps % self.update_interval and self.steps > self.start_steps:
                 batch = self.replay_buffer.sample(self.batch_size)
                 to_log = self.steps % self.log_interval == 0
                 self.agent.learn(batch, to_log)
             
-            if self.steps % self.eval_interval == 0 and self.steps > self.start_steps and False:
-                print("EVAL")
+            if self.steps % self.eval_interval == 0 and self.steps > self.start_steps + 4000:
+                print("EVAL", "BUF LEN", len(self.replay_buffer))
                 self.evaluate()
-                #self.agent.save_models(save_dir="models/")
-                
+                train_data.clear()
+            
+            episode_steps += 1
+            
+    
+    def close(self):
+        self.env.close()
+    
     def evaluate(self):
         num_episodes = 0
         num_steps = 0
-        total_return = 0.0
         
         while True:
             self.env.reset()
             if num_steps > self.num_eval_steps:
                 break
-            episode_steps = 0
-            episode_return = 0.0
-            all_done = False
-            
-            while not all_done and episode_steps <= self.max_episode_steps:
-                decision_steps, terminal_steps = self.env.get_steps(self.behavior_name)
-                all_done = len(terminal_steps) == self.num_agents
-                actions = self.agent.act(torch.from_numpy(decision_steps.obs[0])).numpy()
-                self.set_actions_for_agents(actions)
-                print("ACTIONS", actions)
-                self.env.step()
+            eval_train_data = GridWorldTrainData(eval=True)
+            epsisode_steps = 0
+
+            while epsisode_steps < self.max_episode_steps:
+                self.execute(train_data=eval_train_data, eval=True)
                 num_steps += 1
-                episode_steps += 1
-                episode_return += decision_steps.reward.mean()
+                epsisode_steps += 1
             
             num_episodes += 1
-            total_return += episode_return
-            print(f"EP: {num_episodes}, RETURN: {total_return}")
+            print(f"EP: {num_episodes}, REW: {np.mean(eval_train_data.cum_rew)}")
 
-         
-        mean_return = total_return / num_episodes
-        self.agent.writer.add_scalar(
-            'reward/test', mean_return, self.steps)
-        print('-' * 60)
-        print(f'Num steps: {self.steps:<5}  '
-              f'return: {mean_return:<5.1f}')
-        print('-' * 60)
-    
-    def close(self):
-        self.env.close()
-
-            
     def run(self):
         while True:
             self.train_episode()

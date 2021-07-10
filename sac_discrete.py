@@ -82,16 +82,13 @@ class SAC_Discrete():
             min_qf_next_target = action_probs * (torch.min(next_q1, next_q2) - self.alpha * log_action_probs)
             
             min_qf_next_target = min_qf_next_target.sum(dim=1).unsqueeze(-1)
-            print("MIN QF NEXT TARG", min_qf_next_target)
             target_q = rewards + (1.0 - dones.byte()) * self.gamma * (min_qf_next_target)
-        print("TARGET Q", target_q)
         return target_q
 
     def calc_critic_loss(self, batch):
         curr_q1, curr_q2 = self.calc_current_q(*batch)
         target_q = self.calc_target_q(*batch)
 
-        print("CURR Q", curr_q1, curr_q2)
 
         mean_q1 = curr_q1.detach().mean().item()
         mean_q2 = curr_q2.detach().mean().item()
@@ -105,7 +102,6 @@ class SAC_Discrete():
         states, actions, rewards, next_states, dones = batch
 
         _, action_probs, log_action_probs = self.policy.sample(states)
-        print("ACTION PROBS", action_probs)
 
         with torch.no_grad():
             q1, q2 = self.critic(states)
@@ -129,14 +125,12 @@ class SAC_Discrete():
         policy_loss, log_action_probs = self.calc_policy_loss(batch)
         entropy_loss = self.calc_entropy_loss(log_action_probs)
 
-        print("ENTROPY LOSS", entropy_loss)
         
         update_params(self.q1_optim, q1_loss)
         update_params(self.q2_optim, q2_loss)
         soft_update_of_target_network(self.critic, self.target_critic, self.tau)
         update_params(self.policy_optim, policy_loss)
         update_params(self.alpha_optim, entropy_loss)
-        print("LOG ALPHA", self.log_alpha)
         self.alpha = self.log_alpha.exp()         
 
         if to_log:
