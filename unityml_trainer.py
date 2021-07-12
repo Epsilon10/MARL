@@ -40,10 +40,10 @@ class GridWorldTrainData():
 class UnityMLTrainer():
     # Discrete action spaces only right now, will impl continuous in futre
     def __init__(self, env,num_steps=100000, batch_size=64,
-                 lr=3e-4, replay_size=100000, gamma=0.99, multi_step=1,
-                 target_entropy_ratio=0.98, start_steps=2000,
-                 update_interval=4, target_update_interval=800,
-                 use_per=False, dueling_net=False, num_eval_steps=12500,
+                 lr=3e-4, replay_size=30000, gamma=0.9, multi_step=1,
+                 target_entropy_ratio=0.98, start_steps=400,
+                 update_interval=2, target_update_interval=800,
+                 use_per=False, dueling_net=False, num_eval_steps=2100,
                  max_episode_steps=2700, log_interval=5, eval_interval=100,
                  cuda=True, seed=0, num_agents=9, automatic_entropy_tuning=True):
         
@@ -65,12 +65,13 @@ class UnityMLTrainer():
         self.action_spec = behavior_spec.action_spec
         self.observation_specs = behavior_spec.observation_specs
     
-        self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], hidden_dim=512,  gamma=0.99, lr=lr)
+        self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], hidden_dim=512,  gamma=gamma, lr=lr)
         self.replay_buffer = ReplayBuffer(replay_size, 123456)
         self.batch_size = batch_size
 
         self.start_steps = start_steps
         self.steps = 0
+        self.replay_size = replay_size
     
     
     def set_actions_for_agents(self, actions):
@@ -123,8 +124,6 @@ class UnityMLTrainer():
 
                 train_data.cum_rew_agent[agent_id] += decision_steps[agent_id].reward
 
-            
-        
         self.set_actions_for_agents(actions)
         self.env.step()
             
@@ -137,7 +136,8 @@ class UnityMLTrainer():
         train_data = GridWorldTrainData(eval=False)
 
         while episode_steps < self.max_episode_steps:
-            self.execute(train_data=train_data, eval=False)
+            if len(self.replay_buffer) < self.replay_size:
+                self.execute(train_data=train_data, eval=False)
             self.steps += 1
 
             if self.steps % self.update_interval and self.steps > self.start_steps:
@@ -145,8 +145,7 @@ class UnityMLTrainer():
                 to_log = self.steps % self.log_interval == 0
                 self.agent.learn(batch, to_log)
             
-            if self.steps % self.eval_interval == 0 and self.steps > self.start_steps + 4000:
-                print("EVAL", "BUF LEN", len(self.replay_buffer))
+            if self.steps % self.eval_interval == 0 and self.steps > self.start_steps:
                 self.evaluate()
                 train_data.clear()
             

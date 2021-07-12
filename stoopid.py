@@ -191,12 +191,12 @@ class Trainer:
 
       
       # Pick the best action using argmax
+      print("ACTION VALS", actions_values)
       actions_values += epsilon * (
         np.random.randn(actions_values.shape[0], actions_values.shape[1])
       ).astype(np.float32)
       actions = np.argmax(actions_values, axis=1)
       actions.resize((len(decision_steps), 1))
-      print("ACTIONS", actions)
       # Store the action that was picked, it will be put in the trajectory later
       for agent_index, agent_id in enumerate(decision_steps.agent_id):
         dict_last_action_from_agent[agent_id] = actions[agent_index]

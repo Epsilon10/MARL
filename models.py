@@ -134,7 +134,6 @@ class CategoricalPolicy(BaseNetwork):
         if self.use_conv:
             states = self.conv(states)
         out = self.net(states)
-        out+= epsilon * torch.rand(out.shape[0], out.shape[1])
         action_probs = F.softmax(out,dim=1)
         action_distro = Categorical(action_probs)
         actions = action_distro.sample().view(-1,1)

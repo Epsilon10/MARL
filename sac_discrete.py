@@ -42,11 +42,16 @@ class SAC_Discrete():
         self.q1_optim = Adam(self.critic.q1.parameters(), lr=lr)
         self.q2_optim = Adam(self.critic.q2.parameters(), lr=lr)
 
-        self.target_entropy = -np.log(1.0 / num_actions) * .98
+        self.target_entropy  = -np.log(1.0 / num_actions) * .98
 
         # optimize log alpha instead of alpha
 
-        self.log_alpha = torch.zeros(1, requires_grad=True, device=self.device)
+        #self.alpha = 0.078
+        #self.log_alpha = np.log(self.alpha)
+
+        # optimize log alpha instead of alpha
+
+        self.log_alpha = torch.tensor([-2.659], requires_grad=True) # good starting log alpha
         self.alpha = self.log_alpha.exp()
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
         
@@ -88,7 +93,6 @@ class SAC_Discrete():
     def calc_critic_loss(self, batch):
         curr_q1, curr_q2 = self.calc_current_q(*batch)
         target_q = self.calc_target_q(*batch)
-
 
         mean_q1 = curr_q1.detach().mean().item()
         mean_q2 = curr_q2.detach().mean().item()
