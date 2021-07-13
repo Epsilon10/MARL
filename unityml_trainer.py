@@ -40,11 +40,11 @@ class GridWorldTrainData():
 class UnityMLTrainer():
     # Discrete action spaces only right now, will impl continuous in futre
     def __init__(self, env,num_steps=100000, batch_size=64,
-                 lr=3e-4, replay_size=30000, gamma=0.9, multi_step=1,
+                 lr=3e-4, replay_size=60000, gamma=0.9, multi_step=1,
                  target_entropy_ratio=0.98, start_steps=400,
                  update_interval=2, target_update_interval=800,
-                 use_per=False, dueling_net=False, num_eval_steps=2100,
-                 max_episode_steps=2700, log_interval=5, eval_interval=100,
+                 use_per=False, dueling_net=False, num_eval_steps=12000,
+                 max_episode_steps=2700, log_interval=5, eval_interval=1000,
                  cuda=True, seed=0, num_agents=9, automatic_entropy_tuning=True):
         
         self.env = env
@@ -61,7 +61,7 @@ class UnityMLTrainer():
         self.num_agents = num_agents
         self.behavior_name = list(self.env.behavior_specs)[0]
         behavior_spec = self.env.behavior_specs[self.behavior_name]
-        
+        self.best_eval_score = -np.inf
         self.action_spec = behavior_spec.action_spec
         self.observation_specs = behavior_spec.observation_specs
     
@@ -145,12 +145,9 @@ class UnityMLTrainer():
                 to_log = self.steps % self.log_interval == 0
                 self.agent.learn(batch, to_log)
             
-            if self.steps % self.eval_interval == 0 and self.steps > self.start_steps:
-                self.evaluate()
-                train_data.clear()
-            
             episode_steps += 1
             
+        self.evaluate()
     
     def close(self):
         self.env.close()
@@ -158,6 +155,7 @@ class UnityMLTrainer():
     def evaluate(self):
         num_episodes = 0
         num_steps = 0
+        total_return = 0.0
         
         while True:
             self.env.reset()
@@ -172,7 +170,18 @@ class UnityMLTrainer():
                 epsisode_steps += 1
             
             num_episodes += 1
+            total_return += np.mean(eval_train_data.cum_rew)
             print(f"EP: {num_episodes}, REW: {np.mean(eval_train_data.cum_rew)}")
+
+        mean_return = total_return / num_episodes
+        if mean_return > self.best_eval_score:
+            self.best_eval_score = mean_return
+            self.agent.save_models(save_dir='models/best')
+        self.agent.writer.add_scalar('reward/test', mean_return, self.steps)
+        print('-' * 60)
+        print(f'Num steps: {self.steps}  '
+              f'return: {mean_return:<5.1f}')
+        print('-' * 60)
 
     def run(self):
         while True:

@@ -10,7 +10,7 @@ import datetime
 
 import torch.nn as nn
 import torch.nn.functional as F
-
+import os
 # based on https://arxiv.org/pdf/1910.07207.pdf
 
 def update_params(optim, loss, retain_graph=False):
@@ -50,6 +50,7 @@ class SAC_Discrete():
         #self.log_alpha = np.log(self.alpha)
 
         # optimize log alpha instead of alpha
+        GRIDWORLD_STARTING_ENTROPY = -2.659
 
         self.log_alpha = torch.tensor([-2.659], requires_grad=True) # good starting log alpha
         self.alpha = self.log_alpha.exp()
@@ -157,5 +158,12 @@ class SAC_Discrete():
                 'stats/mean_Q1', mean_q1, self.learning_steps)
             self.writer.add_scalar(
                 'stats/mean_Q2', mean_q2, self.learning_steps)
+    
+    def save_models(self, save_dir):
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        self.policy.save(os.path.join(save_dir, 'policy.pth'))
+        self.critic.save(os.path.join(save_dir, 'online_critic.pth'))
+        self.target_critic.save(os.path.join(save_dir, 'target_critic.pth'))
 
         
