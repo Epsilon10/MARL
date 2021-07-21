@@ -40,7 +40,6 @@ class SparseRewardMachine():
                     return True
         return False
 
-    
     def _add_state(self, rm_state_list):
         self.rm_states.extend(
             [state for state in rm_state_list if state not in self.machine_states]

@@ -2,7 +2,7 @@ from math import log, log10
 import torch
 import numpy as np
 from torch.serialization import save
-from models import CategoricalPolicy, VisualQNetworkPair
+from models import CategoricalPolicy, QNetworkPair
 from torch.optim import Adam
 from replay_buffer import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
@@ -25,11 +25,11 @@ def soft_update_of_target_network(local_model, target_model, tau):
         target_param.data.copy_(tau*local_param.data + (1.0-tau)*target_param.data)
 
 class SAC_Discrete():
-    def __init__(self, observation_shape, num_actions, hidden_dim, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True, cuda=False, tau=0.005):
+    def __init__(self, observation_shape, num_actions, hidden_dim, starting_entropy, gamma=0.9, lr=3e-4, automatic_entropy_tuning=True, visual=False, cuda=False, tau=0.005):
         self.device = torch.device("cuda" if cuda and torch.cuda.is_available() else "cpu")
 
-        self.critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).to(device=self.device)
-        self.target_critic = VisualQNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, use_conv=True).to(device=self.device).eval()
+        self.critic = QNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, visual=visual).to(device=self.device)
+        self.target_critic = QNetworkPair(input_shape=observation_shape, num_actions=num_actions, hidden_dim=hidden_dim, visual=visual).to(device=self.device).eval()
 
         self.policy = CategoricalPolicy(observation_shape, num_actions, hidden_dim, True).to(device=self.device)
         
@@ -44,15 +44,9 @@ class SAC_Discrete():
 
         self.target_entropy  = -np.log(1.0 / num_actions) * .98
 
-        # optimize log alpha instead of alpha
-
-        #self.alpha = 0.078
-        #self.log_alpha = np.log(self.alpha)
-
-        # optimize log alpha instead of alpha
         GRIDWORLD_STARTING_ENTROPY = -2.659
 
-        self.log_alpha = torch.tensor([-2.659], requires_grad=True) # good starting log alpha
+        self.log_alpha = torch.tensor([starting_entropy], requires_grad=True) # good starting log alpha
         self.alpha = self.log_alpha.exp()
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
         

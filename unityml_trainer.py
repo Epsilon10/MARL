@@ -65,7 +65,7 @@ class UnityMLTrainer():
         self.action_spec = behavior_spec.action_spec
         self.observation_specs = behavior_spec.observation_specs
     
-        self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], hidden_dim=512,  gamma=gamma, lr=lr)
+        self.agent = SAC_Discrete(self.observation_specs[0].shape, self.action_spec.discrete_branches[0], hidden_dim=512, starting_entropy=-2.659, gamma=gamma, lr=lr)
         self.replay_buffer = ReplayBuffer(replay_size, 123456)
         self.batch_size = batch_size
 

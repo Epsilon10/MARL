@@ -6,6 +6,7 @@ from torch.distributions import Normal, Categorical
 import numpy as np
 from math import floor
 from typing import Tuple
+from utils import initialize_weights_he, get_conv_output_shape
 
 LOG_SIG_MAX = 2
 LOG_SIG_MIN = -20
@@ -13,12 +14,6 @@ LOG_SIG_MIN = -20
 class Flatten(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), -1)
-
-def initialize_weights_he(m):
-    if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
-        torch.nn.init.kaiming_uniform_(m.weight)
-        if m.bias is not None:
-            torch.nn.init.constant_(m.bias, 0)
 
 class BaseNetwork(nn.Module):
     def save(self, path):
@@ -43,63 +38,48 @@ class FullCNN(BaseNetwork):
     
     def forward(self, states):
         return self.net(states.permute(0,3,1,2))
-    
-    @staticmethod
-    def conv_output_shape(
-        h_w: Tuple[int, int],
-        kernel_size: int = 1,
-        stride: int = 1,
-        pad: int = 0,
-        dilation: int = 1,
-    ):
-        """
-        Computes the height and width of the output of a convolution layer.
-        """
-        h = floor(
-        ((h_w[0] + (2 * pad) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
-        )
-        w = floor(
-        ((h_w[1] + (2 * pad) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
-        )
-        return h, w
 
-class VisualQNetwork(BaseNetwork):
-    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
-        super().__init__()
-
-        self.use_conv = use_conv
-
-        height = input_shape[0]
-        width = input_shape[1]
-        in_channels = input_shape[2]
-
-        conv1_hw = FullCNN.conv_output_shape((height, width), 8, 4)
-        conv2_hw = FullCNN.conv_output_shape(conv1_hw, 4, 2)
-        conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
-
-        if self.use_conv:
-            self.conv = FullCNN(in_channels)       
-
+class BaseQNetwork(BaseNetwork):
+    def __init__(self, num_inputs, num_actions, hidden_dim):
+        super().__init__()  
         self.net = nn.Sequential(
-            nn.Linear(conv3_hw[0]*conv3_hw[1]*64, hidden_dim),
+            nn.Linear(num_inputs, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, num_actions)
         ) 
     
-    def forward(self, states):
-        if self.use_conv:
-            states = self.conv(states)
-        
+    def forward(self, states):        
         return self.net(states)
 
-class VisualQNetworkPair(BaseNetwork):
-    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
-        super().__init__()
+def VisualQNetwork(BaseQNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim):
+        height = input_shape[0]
+        width = input_shape[1]
+        in_channels = input_shape[2]
 
-        self.q1 = VisualQNetwork(input_shape, num_actions, hidden_dim, use_conv)
-        self.q2 = VisualQNetwork(input_shape, num_actions, hidden_dim, use_conv)
+        conv1_hw = get_conv_output_shape((height, width), 8, 4)
+        conv2_hw = get_conv_output_shape(conv1_hw, 4, 2)
+        conv3_hw = get_conv_output_shape(conv2_hw, 3, 1)
+
+        num_inputs = conv3_hw[0]*conv3_hw[1]*64
+        super(VisualQNetwork, self).__init__(num_inputs=num_inputs, num_actions=num_actions, hidden_dim=hidden_dim)
+        self.conv = FullCNN(in_channels)
+
+    def forward(self, states):
+        states = self.conv(states)
+        return super(VisualQNetwork, self).forward(states)
+
+class QNetworkPair(BaseNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim, visual=False):
+        super().__init__()
+        if visual:
+            self.q1 = VisualQNetwork(input_shape, num_actions, hidden_dim)
+            self.q2 = VisualQNetwork(input_shape, num_actions, hidden_dim)
+        else:
+            self.q1 = BaseQNetwork(input_shape[0], num_actions, hidden_dim)
+            self.q2 = BaseQNetwork(input_shape[0], num_actions, hidden_dim)
 
     def forward(self, states):
         q1 = self.q1(states)

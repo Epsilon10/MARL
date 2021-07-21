@@ -3,3 +3,10 @@ env/
 runs/
 __pycache__
 models/
+UnityEnvironments/
+UnityPlayer_s.debug
+UnityPlayer.so
+DungeonEscape.unity
+dungeonescape.x86_64
+LinuxPlayer_s.debug
+dungeonescape_Data
