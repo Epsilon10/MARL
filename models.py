@@ -53,7 +53,7 @@ class BaseQNetwork(BaseNetwork):
     def forward(self, states):        
         return self.net(states)
 
-def VisualQNetwork(BaseQNetwork):
+class VisualQNetwork(BaseQNetwork):
     def __init__(self, input_shape, num_actions, hidden_dim):
         height = input_shape[0]
         width = input_shape[1]
@@ -64,12 +64,12 @@ def VisualQNetwork(BaseQNetwork):
         conv3_hw = get_conv_output_shape(conv2_hw, 3, 1)
 
         num_inputs = conv3_hw[0]*conv3_hw[1]*64
-        super(VisualQNetwork, self).__init__(num_inputs=num_inputs, num_actions=num_actions, hidden_dim=hidden_dim)
+        super().__init__(num_inputs=num_inputs, num_actions=num_actions, hidden_dim=hidden_dim)
         self.conv = FullCNN(in_channels)
 
     def forward(self, states):
         states = self.conv(states)
-        return super(VisualQNetwork, self).forward(states)
+        return super().forward(states)
 
 class QNetworkPair(BaseNetwork):
     def __init__(self, input_shape, num_actions, hidden_dim, visual=False):
@@ -100,9 +100,9 @@ class CategoricalPolicy(BaseNetwork):
         if self.use_conv:
             self.conv = FullCNN(in_channels)
 
-        conv1_hw = FullCNN.conv_output_shape((height, width), 8, 4)
-        conv2_hw = FullCNN.conv_output_shape(conv1_hw, 4, 2)
-        conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
+        conv1_hw = get_conv_output_shape((height, width), 8, 4)
+        conv2_hw = get_conv_output_shape(conv1_hw, 4, 2)
+        conv3_hw = get_conv_output_shape(conv2_hw, 3, 1)
         
         self.net = nn.Sequential(
             nn.Linear(conv3_hw[0]*conv3_hw[1]*64, hidden_dim),
