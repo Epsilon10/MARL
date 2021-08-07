@@ -6,6 +6,7 @@ from torch.distributions import Normal, Categorical
 import numpy as np
 from math import floor
 from typing import Tuple
+from utils import initialize_weights_he, get_conv_output_shape
 
 LOG_SIG_MAX = 2
 LOG_SIG_MIN = -20
@@ -13,12 +14,6 @@ LOG_SIG_MIN = -20
 class Flatten(nn.Module):
     def forward(self, x):
         return x.view(x.size(0), -1)
-
-def initialize_weights_he(m):
-    if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
-        torch.nn.init.kaiming_uniform_(m.weight)
-        if m.bias is not None:
-            torch.nn.init.constant_(m.bias, 0)
 
 class BaseNetwork(nn.Module):
     def save(self, path):
@@ -31,6 +26,8 @@ class FullCNN(BaseNetwork):
     def __init__(self, in_channels):
         super().__init__()
 
+        """
+
         self.net = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=8, stride=4, padding=0),
             nn.ReLU(),
@@ -40,6 +37,17 @@ class FullCNN(BaseNetwork):
             nn.ReLU(),
             Flatten(),
         ).apply(initialize_weights_he)
+        """
+        self.net = nn.Sequential(
+            nn.Conv2d(6,16,(2,2)),
+            nn.ReLU(),
+            nn.MaxPool2d((2,2)),
+            nn.Conv2d(16,32,(2,2)),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, (2,2)),
+            nn.ReLU(),
+            Flatten()
+        )
     
     def forward(self, states):
         return self.net(states.permute(0,3,1,2))
@@ -63,25 +71,28 @@ class FullCNN(BaseNetwork):
         )
         return h, w
 
-class VisualQNetwork(BaseNetwork):
-    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
+class QNetwork(BaseNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim, visual=False):
         super().__init__()
 
-        self.use_conv = use_conv
+        self.visual = visual
 
-        height = input_shape[0]
-        width = input_shape[1]
-        in_channels = input_shape[2]
+        if self.visual:
+            height = input_shape[0]
+            width = input_shape[1]
+            in_channels = input_shape[2]
 
-        conv1_hw = FullCNN.conv_output_shape((height, width), 8, 4)
-        conv2_hw = FullCNN.conv_output_shape(conv1_hw, 4, 2)
-        conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
+            conv1_hw = get_conv_output_shape((height, width), 8, 4)
+            conv2_hw = get_conv_output_shape(conv1_hw, 4, 2)
+            conv3_hw = get_conv_output_shape(conv2_hw, 3, 1)
 
-        if self.use_conv:
-            self.conv = FullCNN(in_channels)       
+            if self.visual:
+                self.conv = FullCNN(in_channels) 
+
+        linear_input = conv3_hw[0]*conv3_hw[1]*64  if visual else input_shape[0]
 
         self.net = nn.Sequential(
-            nn.Linear(conv3_hw[0]*conv3_hw[1]*64, hidden_dim),
+            nn.Linear(linear_input, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -89,17 +100,17 @@ class VisualQNetwork(BaseNetwork):
         ) 
     
     def forward(self, states):
-        if self.use_conv:
+        if self.visual:
             states = self.conv(states)
         
         return self.net(states)
 
-class VisualQNetworkPair(BaseNetwork):
-    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
+class QNetworkPair(BaseNetwork):
+    def __init__(self, input_shape, num_actions, hidden_dim, visual=False):
         super().__init__()
 
-        self.q1 = VisualQNetwork(input_shape, num_actions, hidden_dim, use_conv)
-        self.q2 = VisualQNetwork(input_shape, num_actions, hidden_dim, use_conv)
+        self.q1 = QNetwork(input_shape, num_actions, hidden_dim, visual)
+        self.q2 = QNetwork(input_shape, num_actions, hidden_dim, visual)
 
     def forward(self, states):
         q1 = self.q1(states)
@@ -108,33 +119,34 @@ class VisualQNetworkPair(BaseNetwork):
         return q1, q2
 
 class CategoricalPolicy(BaseNetwork):
-    def __init__(self, input_shape, num_actions, hidden_dim, use_conv=False):
+    def __init__(self, input_shape, num_actions, hidden_dim, visual=False):
         super().__init__()
 
-        in_channels = input_shape[2]
-        height = input_shape[0]
-        width = input_shape[1]
+        self.visual = visual
 
-        self.use_conv = use_conv
+        if self.visual:
+            in_channels = input_shape[2]
+            height = input_shape[0]
+            width = input_shape[1]
 
-        if self.use_conv:
             self.conv = FullCNN(in_channels)
 
-        conv1_hw = FullCNN.conv_output_shape((height, width), 8, 4)
-        conv2_hw = FullCNN.conv_output_shape(conv1_hw, 4, 2)
-        conv3_hw = FullCNN.conv_output_shape(conv2_hw, 3, 1)
+        conv1_hw = get_conv_output_shape((height, width), 8, 4)
+        conv2_hw = get_conv_output_shape(conv1_hw, 4, 2)
+        conv3_hw = get_conv_output_shape(conv2_hw, 3, 1)
+
+        linear_input = conv3_hw[0]*conv3_hw[1]*64  if visual else input_shape[0]
         
         self.net = nn.Sequential(
-            nn.Linear(conv3_hw[0]*conv3_hw[1]*64, hidden_dim),
+            nn.Linear(linear_input, hidden_dim),
             nn.ReLU(inplace=True),
             nn.Linear(hidden_dim, num_actions)
         )
     
     def sample(self, states, epsilon=0.1):
-        if self.use_conv:
+        if self.visual:
             states = self.conv(states)
-        out = self.net(states)
-        action_probs = F.softmax(out,dim=1)
+        action_probs = F.softmax(self.net(states),dim=1)
         action_distro = Categorical(action_probs)
         actions = action_distro.sample().view(-1,1)
 
