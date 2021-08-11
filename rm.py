@@ -19,7 +19,6 @@ class RMEntry(NamedTuple):
     event: str
     reward: float
 
-
 class RewardMachine():
     def __init__(self, num_states, reward_functions):
         self.current_state = 0
