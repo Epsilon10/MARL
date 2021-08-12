@@ -73,20 +73,22 @@ class MAGW_Env(MultiGridEnv):
     
     def step(self, actions):
         obs, reward, done, info = super().step(actions)
-        
+        event_finished = False
+
         for i in range(len(self.agents)):
             ax, ay = self.agents[i].pos
             gx, gy = self.goal_locs[i]
 
             if actions[i] == self.actions.done:
                 if at_target(ax, ay, gx, gy):
-                    reward = self.agents[i].rm.get_reward(True)
+                    event_finished = True
                 self.agents_done[i] = True
 
             if at_target(ax, ay, self.door_loc[0],self.door_loc[1]):
                 self.agents[i].rm.advance()
-                    
+                event_finished = True
         all_done = all(self.agents_done)
+
         return obs, reward, all_done, info
 # 3 rm states, get key, go to door (unlock it), go to goal
 

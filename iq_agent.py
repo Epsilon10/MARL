@@ -8,11 +8,12 @@ class IqAgent(Agent):
     def __init__(self, world,color, num_rm_states, replay_size, batch_size, sac_params):
         self.q_functions = []
         self.initialize_rm(num_rm_states)
-        self.replay_buffer = ReplayBuffer(capacity=replay_size, seed=0)
+        self.replay_buffers=[]
         self.batch_size = batch_size
 
         for _ in range(num_rm_states):
             self.q_functions.append(SAC_Discrete(sac_params)) # fix params
+            self.replay_buffers.append(ReplayBuffer(capacity=replay_size, seed=0))
 
         super().__init__(world=world, color=color)
         
@@ -25,11 +26,12 @@ class IqAgent(Agent):
         self.rm = RewardMachine(num_rm_states, [u1_function, u2_function])
     
     def learn(self, to_log=False):
-        batch = self.replay_buffer.sample(self.batch_size)
-        self.q_functions[self.rm.current_state].learn(batch, to_log)
+        current_state = self.rm.current_state
+        batch = self.replay_buffers[current_state].sample(self.batch_size)
+        self.q_functions[current_state].learn(batch, to_log)
     
     def add_experience(self, s, a, r, n, d):
-        self.replay_buffer.push(s,a,r,n,d)
+        self.replay_buffers[self.rm.current_state].push(s,a,r,n,d)
 
     def advance_rm(self):
         self.rm.advance()

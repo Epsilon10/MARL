@@ -4,7 +4,6 @@ import time
 import itertools
 
 from torch.cuda.profiler import start
-from marl import IqAgentList
 
 register(
     id='mutltiagent-gw-v0',
@@ -19,6 +18,9 @@ start_steps = 20000
 replay_size = 100000
 max_episode_steps = 200000
 NUM_AGENTS = 2
+log_interval = 5
+max_steps = 100000
+eval_interval = 10
 
 iq_agents = env.agents
 
@@ -35,8 +37,10 @@ for i_episode in itertools.count(1):
             actions = iq_agents.get_actions(states)
         
         for agent in iq_agents:
-            if agent.buf_at_capacity():
-                agent.learn()
+            if start_steps < total_numsteps:
+                to_log = total_numsteps % log_interval == 0
+                agent.learn(to_log=to_log)
+
         updates += 1
         next_states, rewards, done, _ = env.step(actions)
         episode_steps += 1
@@ -48,3 +52,26 @@ for i_episode in itertools.count(1):
         for i, agent in enumerate(iq_agents):
             agent.add_experience(states[i],actions[i], rewards[i],next_states[i], done)
         
+        states = next_states
+
+    if total_numsteps > max_steps:
+        break
+    
+    if i_episode % eval_interval == 0:
+        avg_reward = 0
+        episodes = 10
+        for _ in range(episodes):
+            states = env.reset()
+            episode_reward = 0
+            done = False
+            while not done:
+                actions = iq_agents.get_actions(states)
+
+                next_states, rewards, done, _ = env.step(actions)
+                episode_reward += rewards.sum()
+
+                states = next_states
+            avg_reward += episode_reward
+        avg_reward /= episodes
+
+env.close()

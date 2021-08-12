@@ -51,25 +51,6 @@ class FullCNN(BaseNetwork):
     
     def forward(self, states):
         return self.net(states.permute(0,3,1,2))
-    
-    @staticmethod
-    def conv_output_shape(
-        h_w: Tuple[int, int],
-        kernel_size: int = 1,
-        stride: int = 1,
-        pad: int = 0,
-        dilation: int = 1,
-    ):
-        """
-        Computes the height and width of the output of a convolution layer.
-        """
-        h = floor(
-        ((h_w[0] + (2 * pad) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
-        )
-        w = floor(
-        ((h_w[1] + (2 * pad) - (dilation * (kernel_size - 1)) - 1) / stride) + 1
-        )
-        return h, w
 
 class QNetwork(BaseNetwork):
     def __init__(self, input_shape, num_actions, hidden_dim, visual=False):
