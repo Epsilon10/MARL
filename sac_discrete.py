@@ -52,7 +52,7 @@ class SAC_Discrete():
         # optimize log alpha instead of alpha
         GRIDWORLD_STARTING_ENTROPY = -2.659
 
-        self.log_alpha = torch.tensor([-2.659], requires_grad=True) # good starting log alpha
+        self.log_alpha = torch.tensor([GRIDWORLD_STARTING_ENTROPY], requires_grad=True) # good starting log alpha
         self.alpha = self.log_alpha.exp()
         self.alpha_optim = Adam([self.log_alpha], lr=lr)
         

@@ -27,7 +27,6 @@ class FullCNN(BaseNetwork):
         super().__init__()
 
         """
-
         self.net = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=8, stride=4, padding=0),
             nn.ReLU(),
@@ -38,6 +37,7 @@ class FullCNN(BaseNetwork):
             Flatten(),
         ).apply(initialize_weights_he)
         """
+        
         self.net = nn.Sequential(
             nn.Conv2d(6,16,(2,2)),
             nn.ReLU(),

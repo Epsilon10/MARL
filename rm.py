@@ -13,12 +13,6 @@ from sac_discrete import SAC_Discrete
 from typing import NamedTuple, ByteString, List
 import numpy as np
 
-class RMEntry(NamedTuple):
-    state: np.ndarray
-    next_state: np.ndarray
-    event: str
-    reward: float
-
 class RewardMachine():
     def __init__(self, num_states, reward_functions):
         self.current_state = 0
